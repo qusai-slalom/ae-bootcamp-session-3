@@ -1,5 +1,9 @@
 # TODO App Epics and Stories
 
+Source: [confirmed PRD](prd-todo.md). Technical requirements below describe proposed implementation work, not features already implemented.
+
+Scope guardrails: no notifications, recurring tasks, multi-user features, external storage, backend changes, or dedicated keyboard-navigation/accessibility feature work. Preserve existing component semantics and controls rather than removing them.
+
 ## MVP
 
 - Epic: Local Task Management
@@ -9,30 +13,61 @@
       - Users can create tasks and mark them complete or incomplete; those changes survive a page reload in the same browser.
       - Task titles, completion status, valid due dates, and priorities are stored locally, without backend changes or external storage.
       - Existing local tasks without the new fields remain usable, with no due date and priority P3.
+    - Technical Requirements:
+      - Current baseline: [packages/frontend/src/App.js](../packages/frontend/src/App.js) performs POST/PUT requests in `handleSave`; [packages/frontend/src/TaskList.js](../packages/frontend/src/TaskList.js) owns GET/PATCH/DELETE requests and its own task state. Neither currently persists tasks in browser storage.
+      - Replace those task API calls with a single frontend task state owned by App and a small shared browser `localStorage` persistence utility. Initialize state from one documented storage key and serialize each successful mutation with JSON.
+      - Pass tasks and mutation callbacks to TaskList instead of refetching or remounting it through `refreshKey`. Generate stable unique IDs for new local tasks and preserve IDs on edits and completion changes.
+      - Use the canonical local fields `id`, `title`, `completed`, `dueDate`, and `priority`. Retain existing `description` and other existing task metadata on updates; use P3 and no date when new fields are missing. Normalize restored numeric completion values to booleans when encountered.
+      - Preserve the existing description, edit, and delete controls while moving their persistence locally. Retain the trimmed-title validation in [packages/frontend/src/TaskForm.js](../packages/frontend/src/TaskForm.js); do not overwrite new fields during partial updates.
+      - [packages/backend/src/app.js](../packages/backend/src/app.js) uses in-memory SQLite, `due_date`, and server-side date ordering, with no priority column. Leave its schema, routes, and sorting unchanged; the upgraded frontend must operate without `/api/tasks`. Server-data migration or synchronization is not required by the PRD.
+      - Handle malformed stored JSON and storage read/write failures without crashing or silently reporting a failed write as persisted. Keep in-memory edits available and surface persistence errors through the existing error UI pattern.
+      - Adapt [packages/frontend/src/__tests__/App.test.js](../packages/frontend/src/__tests__/App.test.js) from MSW task fixtures to isolated local-storage fixtures. Test reload/remount persistence, title rejection, completion toggles, existing edit/delete behavior, missing-field defaults, storage errors, and absence of task API requests. Run `npm run test:frontend` for implementation changes.
 - Epic: Task Due Dates
   - Story: Add optional due dates to tasks
     - Acceptance Criteria:
       - Users can create a task with or without a due date.
       - A valid due date is represented as a date-only ISO `YYYY-MM-DD` value and is retained after reload.
       - Leaving the due date empty does not prevent task creation or assign an implicit date.
+    - Technical Requirements:
+      - Depends on the Local Task Management story's local task contract; coordinate the `dueDate` field with the validation story before integrating.
+      - Reuse the existing optional MUI date TextField in [packages/frontend/src/TaskForm.js](../packages/frontend/src/TaskForm.js), including its `due-date-input` test ID. Change form initialization, edit population, and save payloads from `due_date` to canonical `dueDate`; reset to an empty value after submission.
+      - Update the due-date Chip and `formatDueDate` input in [packages/frontend/src/TaskList.js](../packages/frontend/src/TaskList.js) to consume validated `dueDate` values. Keep valid stored values date-only, without converting them to timestamps.
+      - At the local-data normalization boundary, accept a legacy `due_date` field only when `dueDate` is absent, validate it with the same helper, and write canonical `dueDate` thereafter. This is field compatibility, not a new backend import feature.
+      - Extend [packages/frontend/src/__tests__/App.test.js](../packages/frontend/src/__tests__/App.test.js) for dated and undated creation, retained dates after reload, existing edit-form population, clearing a date, and form reset without affecting title or description.
   - Story: Treat invalid due dates as absent
     - Acceptance Criteria:
       - Malformed values and impossible calendar dates, such as `2026-02-30`, are ignored and treated as absent.
       - A task with an invalid due date remains usable rather than being rejected solely because of that date.
       - Invalid dates restored from local storage receive the same treatment as invalid dates supplied during task creation.
       - Absent and invalid dates do not qualify a task for Today or Overdue.
+    - Technical Requirements:
+      - Replace TaskForm's current permissive `normalizeDateString`, which accepts regex-shaped impossible dates and otherwise invokes `new Date`, with one shared pure date-only validator used for writes and local-storage reads.
+      - Require a string in exact `YYYY-MM-DD` form and validate actual calendar components, including month lengths and leap years. Reject timestamps, malformed strings, non-string values, and dates that JavaScript would silently roll into another month.
+      - Normalize absent or invalid dates to `null` in persisted task data and to an empty string in the date input. Do not pass invalid dates to formatting, filtering, highlighting, or sorting; do not make an invalid date a task-level save error.
+      - Validate date-only components without timezone conversion. Keep the current-date provider separate and implement its timezone/day-boundary policy only after the PRD's open decision is resolved.
+      - Add focused helper tests alongside the frontend tests for valid leap days, invalid leap days, impossible dates, whitespace/malformed input, empty/null values, and legacy field normalization. Verify invalid restored dates do not crash the UI or enter date-filtered views.
 - Epic: Task Priorities
   - Story: Add task priority with a P3 default
     - Acceptance Criteria:
       - Users can select exactly P1, P2, or P3 when creating a task.
       - A task created without an explicit priority receives P3.
       - The selected priority survives reload and changes to completion status.
+    - Technical Requirements:
+      - Depends on the Local Task Management story's task contract. Add a controlled MUI Select in [packages/frontend/src/TaskForm.js](../packages/frontend/src/TaskForm.js) with exactly P1, P2, and P3; initialize and reset it to P3 and populate it from `initialTask` when editing.
+      - Include `priority` in the save payload and local persistence; use a single shared enum/default definition so form options, badges, and later sorting agree.
+      - Enforce the enum at the local normalization boundary, not only in the selector. As a defensive implementation policy, normalize unsupported stored priority values to P3; no additional priority levels are introduced.
+      - Extend [packages/frontend/src/__tests__/App.test.js](../packages/frontend/src/__tests__/App.test.js) to cover the default, each selectable priority, form reset, edit population, reload persistence, invalid stored values, and preservation during completion updates.
   - Story: Display color-coded priority badges
     - Acceptance Criteria:
       - Every displayed task shows a badge with its priority label.
       - P1 badges are red, P2 badges are orange, and P3 badges are gray.
       - Badges remain visible in every applicable filter view, including completed tasks in All.
       - Badge color indicates priority, not overdue status; overdue task highlighting remains Post-MVP.
+    - Technical Requirements:
+      - Depends on the priority field story. Reuse MUI Chip in [packages/frontend/src/TaskList.js](../packages/frontend/src/TaskList.js) and a shared priority-to-color mapping; show the textual P1/P2/P3 label as well as red/orange/gray styling.
+      - Keep the priority badge separate from the existing due-date Chip and from Post-MVP overdue row styling. Retain the badge on completed rows even though task titles are gray and struck through.
+      - Adjust TaskList's existing absolute-positioned trailing controls and fixed right padding as needed so date badges, priority badges, and edit/delete actions do not overlap task text on narrow screens. Use existing MUI layout conventions from [docs/ui-guidelines.md](ui-guidelines.md).
+      - Test labels and mapped styling for all priorities, completed tasks, and each applicable filter in [packages/frontend/src/__tests__/App.test.js](../packages/frontend/src/__tests__/App.test.js); manually verify the row layout at mobile and desktop widths.
 - Epic: Task Filters
   - Story: Add All, Today, and Overdue filter tabs
     - Acceptance Criteria:
@@ -45,6 +80,12 @@
       - An empty result displays an empty list state without an error.
       - Before implementation, confirm the timezone and day-boundary convention with the product owner; no convention is assumed here.
       - MVP filtering does not introduce automatic sorting or overdue highlighting.
+    - Technical Requirements:
+      - Depends on local task state and shared date validation. Add MUI Tabs/Tab controls in [packages/frontend/src/App.js](../packages/frontend/src/App.js), with All as the initial implementation default and active-filter state independent of persisted task data.
+      - Derive the visible task array from canonical state using pure predicates; never filter by deleting entries from state or storage. Preserve underlying list order in MVP and reuse TaskList's existing `No tasks found.` empty state.
+      - Centralize the current-date provider and predicates: Today requires incomplete plus a valid date equal to today; Overdue requires incomplete plus a valid date earlier than today. Lexical comparison is valid only after date strings have been validated and normalized.
+      - Block date-boundary implementation on product confirmation of timezone/day rollover. Make the clock injectable or mockable so tests can pin today; once confirmed, refresh derived views at that boundary and when returning to the app without requiring task edits.
+      - In [packages/frontend/src/__tests__/App.test.js](../packages/frontend/src/__tests__/App.test.js), use a fixed clock and a matrix of yesterday/today/tomorrow, absent/invalid dates, and complete/incomplete tasks. Test tab switching, completion removal, empty states, unchanged stored data, and the agreed date boundary.
 
 ## Post-MVP
 
@@ -56,6 +97,11 @@
       - Highlighting is removed when a task is completed and remains distinct from its priority badge.
       - Confirm the visual treatment before implementation; the PRD suggests red but does not mandate a final style.
       - Highlighting uses the same confirmed current-date convention as the filters.
+    - Technical Requirements:
+      - Depends on the MVP filters' shared overdue predicate and confirmed date convention; do not duplicate overdue calculations in the rendering layer.
+      - Extend the existing ListItem `sx` styling in [packages/frontend/src/TaskList.js](../packages/frontend/src/TaskList.js) with the approved overdue treatment, including its hover state. Do not replace the separate priority badge or the completed-task styling.
+      - Derive highlighting from current task data on render, without persisting an `overdue` flag. Completion changes and the shared date-boundary refresh must update it immediately.
+      - Extend [packages/frontend/src/__tests__/App.test.js](../packages/frontend/src/__tests__/App.test.js) for overdue highlighting in All and Overdue, its absence in Today, all excluded task categories, and completion/day-boundary transitions. Check the chosen visual treatment alongside all three priority badge colors.
 - Epic: Task Ordering
   - Story: Sort tasks by overdue status, priority, and due date
     - Acceptance Criteria:
@@ -64,3 +110,10 @@
       - Before implementation, confirm whether undated-last placement is global or within priority groups, and how completed tasks are ordered in All.
       - Sorting works with each filter without changing its membership or any stored task values.
       - Ordering is recalculated when task data changes, using the same current-date convention as filtering and highlighting.
+    - Technical Requirements:
+      - Depends on normalized dates/priorities and the shared overdue predicate. Block the final comparator on product decisions about global versus per-priority undated-last placement and completed-task placement in All; record those decisions before encoding expected output.
+      - Implement one pure frontend comparator with explicit priority ranks P1=1, P2=2, P3=3, the agreed overdue/completion grouping, and ascending validated dates. Treat null dates as undated and apply the confirmed undated-last policy.
+      - Apply sorting to a copy of the filtered task array before passing it to [packages/frontend/src/TaskList.js](../packages/frontend/src/TaskList.js); never mutate React state or persisted ordering. Preserve input order for otherwise equal tasks as a deterministic technical tie policy.
+      - Do not change or reuse the SQL ordering in [packages/backend/src/app.js](../packages/backend/src/app.js): it currently sorts only by date and creation time and is outside this frontend-only upgrade.
+      - Add table-driven comparator tests for overdue versus non-overdue, P1/P2/P3, earlier/later dates, invalid/absent dates, equal keys, completed tasks, and high-priority undated versus low-priority dated tasks under the approved policy. Verify the input array remains unchanged.
+      - Extend [packages/frontend/src/__tests__/App.test.js](../packages/frontend/src/__tests__/App.test.js) for visible ordering in all tabs and after create/edit/completion and date-boundary changes. Run `npm run test:frontend`; leave backend code and its existing tests unchanged.
