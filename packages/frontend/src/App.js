@@ -3,6 +3,7 @@ import { CssBaseline, Container, AppBar, Toolbar, Typography, Box } from '@mui/m
 import CheckCircleOutlineIcon from '@mui/icons-material/CheckCircleOutline';
 import TaskList from './TaskList';
 import TaskForm from './TaskForm';
+import './App.css';
 
 function App() {
   const [editingTask, setEditingTask] = useState(null);
@@ -11,21 +12,35 @@ function App() {
   const handleSave = async (task) => {
     if (editingTask) {
       // Edit existing task
-      await fetch(`/api/tasks/${editingTask.id}`, {
+      const response = await fetch(`/api/tasks/${editingTask.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(task)
       });
+      if (!response.ok) throw new Error('Failed to save task');
       setEditingTask(null);
     } else {
       // Add new task
-      await fetch('/api/tasks', {
+      const response = await fetch('/api/tasks', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(task)
       });
+      if (!response.ok) throw new Error('Failed to save task');
     }
     setRefreshKey(k => k + 1);
+  };
+
+  const handlePriorityChange = async (task, priority) => {
+    const response = await fetch(`/api/tasks/${task.id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ priority }),
+    });
+    if (!response.ok) throw new Error('Failed to update priority');
+    const updatedTask = await response.json();
+    setEditingTask(current => current?.id === task.id ? { ...current, priority } : current);
+    return updatedTask;
   };
 
   return (
@@ -62,17 +77,19 @@ function App() {
           maxWidth="md" 
           sx={{ 
             mt: 4,
-            height: 'calc(100vh - 120px)', 
             display: 'flex', 
             flexDirection: 'column',
-            overflow: 'hidden'
           }}
         >
           <Box sx={{ mb: 2, flexShrink: 0 }}>
             <TaskForm onSave={handleSave} initialTask={editingTask} />
           </Box>
           <Box sx={{ flexGrow: 1, minHeight: 0, overflow: 'hidden' }}>
-            <TaskList key={refreshKey} onEdit={setEditingTask} />
+            <TaskList
+              key={refreshKey}
+              onEdit={setEditingTask}
+              onPriorityChange={handlePriorityChange}
+            />
           </Box>
         </Container>
       </Box>

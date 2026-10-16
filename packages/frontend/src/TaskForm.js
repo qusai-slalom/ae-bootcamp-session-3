@@ -2,12 +2,21 @@ import React, { useState, useEffect } from 'react';
 import { TextField, Button, Paper, Typography, Box } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
 import SaveIcon from '@mui/icons-material/Save';
+import PriorityControl from './PriorityControl';
 
 function TaskForm({ onSave, initialTask }) {
+  const {
+    id: initialId,
+    title: initialTitle,
+    description: initialDescription,
+    due_date: initialDueDate,
+  } = initialTask || {};
   const [title, setTitle] = useState(initialTask?.title || '');
   const [description, setDescription] = useState(initialTask?.description || '');
   const [dueDate, setDueDate] = useState(initialTask?.due_date || '');
+  const [priority, setPriority] = useState(initialTask?.priority || 'P3');
   const [error, setError] = useState(null);
+  const [saving, setSaving] = useState(false);
 
   // Helper to normalize date string to YYYY-MM-DD format
   const normalizeDateString = (dateString) => {
@@ -26,16 +35,14 @@ function TaskForm({ onSave, initialTask }) {
 
   // Update form fields when initialTask changes (editing mode)
   useEffect(() => {
-    if (initialTask) {
-      setTitle(initialTask.title || '');
-      setDescription(initialTask.description || '');
-      setDueDate(normalizeDateString(initialTask.due_date));
-    } else {
-      setTitle('');
-      setDescription('');
-      setDueDate('');
-    }
-  }, [initialTask]);
+    setTitle(initialTitle || '');
+    setDescription(initialDescription || '');
+    setDueDate(normalizeDateString(initialDueDate));
+  }, [initialId, initialTitle, initialDescription, initialDueDate]);
+
+  useEffect(() => {
+    setPriority(initialTask?.priority || 'P3');
+  }, [initialTask?.id, initialTask?.priority]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -44,10 +51,18 @@ function TaskForm({ onSave, initialTask }) {
       return;
     }
     setError(null);
-    await onSave({ title, description, due_date: dueDate });
-    setTitle('');
-    setDescription('');
-    setDueDate('');
+    setSaving(true);
+    try {
+      await onSave({ title, description, due_date: dueDate, priority });
+      setTitle('');
+      setDescription('');
+      setDueDate('');
+      setPriority('P3');
+    } catch (err) {
+      setError('Failed to save task');
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
@@ -143,10 +158,20 @@ function TaskForm({ onSave, initialTask }) {
             }
           }}
         />
-        {error && <Typography color="error" sx={{ fontWeight: 500, fontSize: '0.875rem' }}>{error}</Typography>}
+        <Box>
+          <Typography variant="body2" sx={{ mb: 1 }}>Priority</Typography>
+          <PriorityControl
+            value={priority}
+            onChange={setPriority}
+            label="Task priority"
+            disabled={saving}
+          />
+        </Box>
+        {error && <Typography role="alert" color="error" sx={{ fontWeight: 500, fontSize: '0.875rem' }}>{error}</Typography>}
         <Box display="flex" gap={2}>
           <Button 
             type="submit" 
+            disabled={saving}
             variant="contained" 
             color="primary"
             fullWidth

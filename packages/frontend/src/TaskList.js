@@ -5,15 +5,39 @@ import {
 import DeleteIcon from '@mui/icons-material/Delete';
 import EditIcon from '@mui/icons-material/Edit';
 import EventIcon from '@mui/icons-material/Event';
+import PriorityControl, { PRIORITIES } from './PriorityControl';
 
-function TaskList({ onEdit }) {
-  const [tasks, setTasks] = useState([]);
+const normalizeTask = task => ({
+  ...task,
+  title: task.title ?? task.name,
+  priority: PRIORITIES.includes(task.priority) ? task.priority : 'P3',
+});
+
+function TaskList({ onEdit, onPriorityChange }) {
+  const [tasks, setTasks] = useState(() => {
+    try {
+      const storedTasks = JSON.parse(localStorage.getItem('tasks'));
+      return Array.isArray(storedTasks) ? storedTasks.map(normalizeTask) : [];
+    } catch {
+      return [];
+    }
+  });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [updatingPriority, setUpdatingPriority] = useState(null);
 
   useEffect(() => {
     fetchTasks();
   }, []);
+
+  useEffect(() => {
+    if (loading) return;
+    try {
+      localStorage.setItem('tasks', JSON.stringify(tasks));
+    } catch {
+      return;
+    }
+  }, [tasks, loading]);
 
   const formatDueDate = (dateString) => {
     if (!dateString) return null;
@@ -33,7 +57,7 @@ function TaskList({ onEdit }) {
       const response = await fetch('/api/tasks');
       if (!response.ok) throw new Error('Failed to fetch tasks');
       const data = await response.json();
-      setTasks(data);
+      setTasks(data.map(normalizeTask));
       setError(null);
     } catch (err) {
       setError(err.message);
@@ -64,12 +88,25 @@ function TaskList({ onEdit }) {
     }
   };
 
+  const handlePriorityChange = async (task, priority) => {
+    setUpdatingPriority(task.id);
+    try {
+      const updatedTask = await onPriorityChange(task, priority);
+      setTasks(current => current.map(item => item.id === task.id
+        ? normalizeTask({ ...item, ...updatedTask }) : item));
+      setError(null);
+    } catch {
+      setError('Failed to update priority');
+    } finally {
+      setUpdatingPriority(null);
+    }
+  };
+
   if (loading) return (
     <Box display="flex" justifyContent="center" alignItems="center" minHeight="200px">
       <CircularProgress sx={{ color: '#1976d2' }} />
     </Box>
   );
-  if (error) return <Typography color="error" sx={{ fontWeight: 500 }}>{error}</Typography>;
 
   return (
     <Paper 
@@ -111,6 +148,7 @@ function TaskList({ onEdit }) {
       >
         Tasks
       </Typography>
+      {error && <Typography role="alert" color="error">{error}</Typography>}
       <List sx={{ p: 0 }}>
         {tasks.length === 0 && (
           <Box 
@@ -123,11 +161,13 @@ function TaskList({ onEdit }) {
             <Typography variant="body2">No tasks found.</Typography>
           </Box>
         )}
-        {tasks.map((task, index) => (
+        {tasks.map(task => (
           <ListItem 
             key={task.id} 
             sx={{ 
-              pr: 18,
+              px: 1,
+              flexWrap: 'wrap',
+              gap: 1,
               py: 1,
               mb: 1,
               borderRadius: 2,
@@ -163,6 +203,7 @@ function TaskList({ onEdit }) {
               }}
             />
             <ListItemText
+              sx={{ flex: '1 1 160px', minWidth: 0, overflowWrap: 'anywhere' }}
               primary={
                 <Typography 
                   variant="body2"
@@ -193,12 +234,9 @@ function TaskList({ onEdit }) {
             />
             <Box 
               sx={{ 
-                position: 'absolute', 
-                right: 8,
-                top: '50%',
-                transform: 'translateY(-50%)',
                 display: 'flex',
                 flexDirection: 'row',
+                flexWrap: 'wrap',
                 alignItems: 'center',
                 gap: 1
               }}
@@ -220,6 +258,12 @@ function TaskList({ onEdit }) {
                   }}
                 />
               )}
+              <PriorityControl
+                value={task.priority}
+                onChange={priority => handlePriorityChange(task, priority)}
+                label={`Priority for ${task.title}`}
+                disabled={updatingPriority !== null}
+              />
               <Box 
                 sx={{ 
                   display: 'flex', 
